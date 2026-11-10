@@ -23,6 +23,7 @@ import com.getcapacitor.WebViewListener
 import com.superproductivity.superproductivity.app.LaunchUrlReplayGuard
 import com.superproductivity.superproductivity.plugins.NavigationBarPlugin
 import com.superproductivity.superproductivity.plugins.SafBridgePlugin
+import com.superproductivity.superproductivity.receiver.ReminderActionReceiver
 import com.superproductivity.superproductivity.receiver.NotificationActionReceiver
 import com.superproductivity.superproductivity.service.BackgroundSyncCredentialStore
 import com.superproductivity.superproductivity.service.FocusModeForegroundService
@@ -74,6 +75,7 @@ class CapacitorMainActivity : BridgeActivity() {
     private var isForegroundServiceFailureReceiverRegistered = false
     private var isWidgetDoneDrainReceiverRegistered = false
     private var isNotificationActionDrainReceiverRegistered = false
+    private var isReminderDoneDrainReceiverRegistered = false
 
     private val storageHelper =
         SimpleStorageHelper(this) // for scoped storage permission management on Android 10+
@@ -104,6 +106,17 @@ class CapacitorMainActivity : BridgeActivity() {
             if (intent?.action == NotificationActionReceiver.ACTION_DRAIN) {
                 // Contentless: Angular pulls the queued actions itself.
                 callJSInterfaceFunctionIfExists("next", "onNotificationActionDrainRequest$")
+            }
+        }
+    }
+
+    private val reminderDoneDrainReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == ReminderActionReceiver.ACTION_DONE_DRAIN) {
+                // Contentless: Angular pulls the queued ids itself via
+                // getReminderDoneQueue(), so there is a single delivery path and
+                // no task data crosses the string-interpolated JS bridge.
+                callJSInterfaceFunctionIfExists("next", "onReminderDoneDrainRequest$")
             }
         }
     }
@@ -283,6 +296,11 @@ class CapacitorMainActivity : BridgeActivity() {
             IntentFilter(NotificationActionReceiver.ACTION_DRAIN)
         )
         isNotificationActionDrainReceiverRegistered = true
+        LocalBroadcastManager.getInstance(this).registerReceiver(
+            reminderDoneDrainReceiver,
+            IntentFilter(ReminderActionReceiver.ACTION_DONE_DRAIN)
+        )
+        isReminderDoneDrainReceiverRegistered = true
 
         // Schedule background sync worker if credentials are configured.
         // Off the main thread: the first credential read opens the
@@ -714,6 +732,12 @@ class CapacitorMainActivity : BridgeActivity() {
                 notificationActionDrainReceiver
             )
             isNotificationActionDrainReceiverRegistered = false
+        }
+        if (isReminderDoneDrainReceiverRegistered) {
+            LocalBroadcastManager.getInstance(this).unregisterReceiver(
+                reminderDoneDrainReceiver
+            )
+            isReminderDoneDrainReceiverRegistered = false
         }
         super.onDestroy()
     }

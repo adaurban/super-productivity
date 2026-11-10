@@ -202,6 +202,12 @@ export interface AndroidInterface {
   // tap while the activity is alive; the actions are pulled via the queue getters
   onNotificationActionDrainRequest$: Subject<void>;
 
+  // Contentless "drain now" signal after a reminder Done/Snooze notification
+  // action while the activity is alive but backgrounded; the queued ids are
+  // pulled via getReminderDoneQueue() (startup and resume drains are triggered
+  // by the effect itself and onResume$)
+  onReminderDoneDrainRequest$: Subject<void>;
+
   // Background sync credential bridge (for WorkManager-based reminder cancellation)
   setSuperSyncCredentials?(baseUrl: string, accessToken: string): void;
   clearSuperSyncCredentials?(): void;
@@ -257,6 +263,7 @@ if (IS_ANDROID_WEB_VIEW) {
   androidInterface.onReminderSnooze$ = new ReplaySubject(20);
   androidInterface.onWidgetDoneDrainRequest$ = new Subject();
   androidInterface.onNotificationActionDrainRequest$ = new Subject();
+  androidInterface.onReminderDoneDrainRequest$ = new Subject();
   androidInterface.isKeyboardShown$ = new BehaviorSubject(false);
 
   androidInterface.isInBackground$ = merge(

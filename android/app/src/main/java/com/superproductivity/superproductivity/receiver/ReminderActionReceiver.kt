@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.core.app.NotificationManagerCompat
 import com.superproductivity.superproductivity.service.ReminderAlarmStore
 import com.superproductivity.superproductivity.service.ReminderNotificationHelper
@@ -21,6 +22,7 @@ class ReminderActionReceiver : BroadcastReceiver() {
         const val ACTION_SNOOZE = "com.superproductivity.REMINDER_SNOOZE"
         const val ACTION_SNOOZE_1H = "com.superproductivity.REMINDER_SNOOZE_1H"
         const val ACTION_DONE = "com.superproductivity.REMINDER_DONE"
+        const val ACTION_DONE_DRAIN = "com.superproductivity.superproductivity.REMINDER_DONE_DRAIN"
         const val EXTRA_NOTIFICATION_ID = "notification_id"
         const val EXTRA_REMINDER_ID = "reminder_id"
         const val EXTRA_RELATED_ID = "related_id"
@@ -84,6 +86,15 @@ class ReminderActionReceiver : BroadcastReceiver() {
 
                 // Queue task ID for the frontend to pick up
                 ReminderDoneQueue.addTaskId(context, relatedId)
+
+                // Signal a live (backgrounded) activity to drain the queue now,
+                // so the completion reaches the op-log and sync without waiting
+                // for the next resume. Contentless: Angular pulls the queued ids
+                // itself via getReminderDoneQueue(). When the process is dead
+                // nobody receives this; the queue still holds the id for the
+                // next app open.
+                LocalBroadcastManager.getInstance(context)
+                    .sendBroadcast(Intent(ACTION_DONE_DRAIN))
             }
         }
     }

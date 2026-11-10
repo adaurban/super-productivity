@@ -1,6 +1,6 @@
 import { inject, Injectable } from '@angular/core';
 import { createEffect } from '@ngrx/effects';
-import { concatMap, startWith, tap } from 'rxjs/operators';
+import { concatMap, merge, Observable, startWith, tap } from 'rxjs';
 import { SnackService } from '../../../core/snack/snack.service';
 import { IS_ANDROID_WEB_VIEW } from '../../../util/is-android-web-view';
 import { DroidLog } from '../../../core/log';
@@ -14,6 +14,44 @@ import { AndroidCaptureImportService } from '../android-capture-import.service';
 import { getCaptureImportErrorReason } from '../../tasks/native-capture/native-capture-importer.service';
 
 // TODO send message to electron when current task changes here
+
+/**
+ * Reads the native reminder done queue and emits every queued task id. The
+ * native queue is destructive on read (getAndClear), so this is the single
+ * hand-off point: whatever it emits, the reminder module persists through the
+ * normal completion path. Used by both the resume drain and the explicit
+ * native drain signal.
+ */
+export const drainReminderQueues = (
+  getQueue: (() => string | null) | undefined,
+  emitDone: (taskId: string) => void,
+): void => {
+  const doneQueue = getQueue?.();
+  if (!doneQueue) {
+    return;
+  }
+  try {
+    const taskIds: string[] = JSON.parse(doneQueue);
+    DroidLog.log('Found reminder done queue', taskIds);
+    for (const id of taskIds) {
+      emitDone(id);
+    }
+  } catch (e) {
+    DroidLog.err('Failed to process reminder done queue', e);
+  }
+};
+
+/**
+ * Drain triggers for the reminder queues: the app resume (existing behaviour)
+ * and the explicit native drain signal sent by ReminderActionReceiver when a
+ * Done button is tapped while the app is alive but backgrounded — so the
+ * completion reaches the op-log and sync immediately, without waiting for the
+ * user to reopen the app.
+ */
+export const reminderDoneDrainTriggers$ = (
+  onResume$: Observable<void>,
+  onDrainRequest$: Observable<void>,
+): Observable<void> => merge(onResume$, onDrainRequest$);
 
 @Injectable()
 export class AndroidEffects {
@@ -76,25 +114,21 @@ export class AndroidEffects {
       { dispatch: false },
     );
 
-  // Drain reminder done/snooze/tap queues on resume (warm start)
+  // Drain reminder done/snooze/tap queues on resume (warm start) and on the
+  // explicit native drain signal (Done tapped while the app is backgrounded).
   checkReminderQueuesOnResume$ =
     IS_ANDROID_WEB_VIEW &&
     createEffect(
       () =>
-        androidInterface.onResume$.pipe(
+        reminderDoneDrainTriggers$(
+          androidInterface.onResume$,
+          androidInterface.onReminderDoneDrainRequest$,
+        ).pipe(
           tap(() => {
-            try {
-              const doneQueue = androidInterface.getReminderDoneQueue?.();
-              if (doneQueue) {
-                const taskIds: string[] = JSON.parse(doneQueue);
-                DroidLog.log('Resume: found reminder done queue', taskIds);
-                for (const id of taskIds) {
-                  androidInterface.onReminderDone$.next(id);
-                }
-              }
-            } catch (e) {
-              DroidLog.err('Failed to process reminder done queue on resume', e);
-            }
+            drainReminderQueues(
+              androidInterface.getReminderDoneQueue?.bind(androidInterface),
+              (id) => androidInterface.onReminderDone$.next(id),
+            );
 
             try {
               const snoozeQueue = androidInterface.getReminderSnoozeQueue?.();
