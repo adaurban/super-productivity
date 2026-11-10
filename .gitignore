@@ -130,3 +130,6 @@ data/
 
 # Generated App Store Connect "What's New" notes (see tools/prepare-appstore-release-notes.js)
 /fastlane/appstore_metadata
+
+# Local release signing key (see android/app/build.gradle signingConfigs.release)
+/keystore.jks
