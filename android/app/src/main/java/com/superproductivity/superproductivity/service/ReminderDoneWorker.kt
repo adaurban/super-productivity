@@ -1,13 +1,20 @@
 package com.superproductivity.superproductivity.service
 
 import android.content.Context
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.content.pm.ServiceInfo
+import android.os.Build
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.core.app.NotificationCompat
 import androidx.webkit.WebViewAssetLoader
 import androidx.work.CoroutineWorker
+import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.superproductivity.superproductivity.widget.ReminderDoneQueue
 import kotlinx.coroutines.Dispatchers
@@ -39,7 +46,12 @@ class ReminderDoneWorker(
         private const val TAG = "ReminderDoneWorker"
         private const val APP_HOST = "localhost"
         private const val DRAIN_TIMEOUT_S = 60L
+        private const val SYNC_GRACE_S = 20L
+        private const val CHANNEL_ID = "sp_background_sync_channel"
+        private const val NOTIFICATION_ID = 1002
     }
+
+    override suspend fun getForegroundInfo(): ForegroundInfo = createForegroundInfo()
 
     override suspend fun doWork(): Result {
         // Peek only: booting the engine for an empty queue is pure waste, and
@@ -61,7 +73,39 @@ class ReminderDoneWorker(
         } finally {
             withContext(Dispatchers.Main) { webView?.destroy() }
         }
+        // Grace period: the engine's boot-time sync uploads the op after the
+        // drain signal; hold the foreground window briefly so it can finish.
+        Thread.sleep(SYNC_GRACE_S * 1000)
         return Result.success()
+    }
+
+    private fun createForegroundInfo(): ForegroundInfo {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Background sync",
+                NotificationManager.IMPORTANCE_MIN
+            ).apply {
+                setShowBadge(false)
+            }
+            applicationContext.getSystemService(NotificationManager::class.java)
+                .createNotificationChannel(channel)
+        }
+        val notification = NotificationCompat.Builder(applicationContext, CHANNEL_ID)
+            .setSmallIcon(com.superproductivity.superproductivity.R.drawable.ic_stat_sp)
+            .setContentTitle("Syncing task changes…")
+            .setSilent(true)
+            .setOngoing(true)
+            .build()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ForegroundInfo(
+                NOTIFICATION_ID,
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE,
+            )
+        } else {
+            ForegroundInfo(NOTIFICATION_ID, notification)
+        }
     }
 
     private fun createHeadlessWebView(context: Context, drained: CountDownLatch): WebView {
