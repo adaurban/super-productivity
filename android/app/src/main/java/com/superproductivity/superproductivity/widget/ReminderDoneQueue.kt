@@ -25,6 +25,12 @@ object ReminderDoneQueue {
         prefs.edit().putString(KEY_DONE_TASKS, array.toString()).commit()
     }
 
+    /** Non-destructive check so a background worker only boots the engine when there is work. */
+    @Synchronized
+    fun hasPending(context: Context): Boolean {
+        return !getPrefs(context).getString(KEY_DONE_TASKS, null).isNullOrEmpty()
+    }
+
     @Synchronized
     fun getAndClear(context: Context): String? {
         val prefs = getPrefs(context)

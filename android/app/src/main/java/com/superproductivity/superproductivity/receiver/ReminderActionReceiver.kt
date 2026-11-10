@@ -4,12 +4,20 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.util.Log
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkManager
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
 import androidx.core.app.NotificationManagerCompat
+import com.superproductivity.superproductivity.service.ReminderDoneWorker
 import com.superproductivity.superproductivity.service.ReminderAlarmStore
 import com.superproductivity.superproductivity.service.ReminderNotificationHelper
 import com.superproductivity.superproductivity.widget.ReminderDoneQueue
 import com.superproductivity.superproductivity.widget.ReminderSnoozeQueue
+import java.util.concurrent.TimeUnit
 
 /**
  * Handles reminder snooze action in the background by simply rescheduling the alarm.
@@ -95,6 +103,27 @@ class ReminderActionReceiver : BroadcastReceiver() {
                 // next app open.
                 LocalBroadcastManager.getInstance(context)
                     .sendBroadcast(Intent(ACTION_DONE_DRAIN))
+
+                // When the process is dead the broadcast above has no receiver:
+                // boot the engine headlessly instead, so the queued completion
+                // is persisted and synced without opening the app. A live app
+                // drains via the broadcast first, so this becomes a no-op peek.
+                try {
+                    WorkManager.getInstance(context).enqueueUniqueWork(
+                        "reminder_done_drain",
+                        ExistingWorkPolicy.APPEND_OR_REPLACE,
+                        OneTimeWorkRequestBuilder<ReminderDoneWorker>()
+                            .setConstraints(
+                                Constraints.Builder()
+                                    .setRequiredNetworkType(NetworkType.CONNECTED)
+                                    .build()
+                            )
+                            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
+                            .build()
+                    )
+                } catch (e: Exception) {
+                    Log.w(TAG, "Failed to enqueue reminder done worker", e)
+                }
             }
         }
     }

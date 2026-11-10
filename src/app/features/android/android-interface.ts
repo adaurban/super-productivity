@@ -208,6 +208,11 @@ export interface AndroidInterface {
   // by the effect itself and onResume$)
   onReminderDoneDrainRequest$: Subject<void>;
 
+  // Signals the headless background worker (ReminderDoneWorker) that the
+  // reminder done drain has run, so it can stop instead of waiting out its
+  // timeout. No-op in a normal app session (nothing is listening).
+  notifyBackgroundDrainComplete?(): void;
+
   // Background sync credential bridge (for WorkManager-based reminder cancellation)
   setSuperSyncCredentials?(baseUrl: string, accessToken: string): void;
   clearSuperSyncCredentials?(): void;
