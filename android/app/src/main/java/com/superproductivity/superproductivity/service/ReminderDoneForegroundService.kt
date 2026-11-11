@@ -8,11 +8,14 @@ import android.content.Intent
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.util.Log
 import android.webkit.JavascriptInterface
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.ConsoleMessage
 import androidx.core.app.NotificationCompat
 import androidx.webkit.WebViewAssetLoader
 import com.superproductivity.superproductivity.widget.ReminderDoneQueue
@@ -52,6 +55,7 @@ class ReminderDoneForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "Service onCreate")
         createChannel()
         startForeground(NOTIFICATION_ID, buildNotification())
         // The WebView must be created (and destroyed) on a Looper thread.
@@ -59,8 +63,10 @@ class ReminderDoneForegroundService : Service() {
     }
 
     private fun bootEngine() {
+        Log.d(TAG, "bootEngine: starting")
         val drained = CountDownLatch(1)
         val webView = createHeadlessWebView(drained)
+        Log.d(TAG, "bootEngine: webview created, loading")
         webView.loadUrl("https://$APP_HOST/index.html")
 
         // Wait off the main thread: the engine signals once per finished done
@@ -68,7 +74,9 @@ class ReminderDoneForegroundService : Service() {
         // net for a failed/slow boot.
         thread(name = "sp-reminder-done-drain") {
             try {
+                Log.d(TAG, "drain thread: waiting ${COMPLETION_TIMEOUT_S}s")
                 drained.await(COMPLETION_TIMEOUT_S, TimeUnit.SECONDS)
+                Log.d(TAG, "drain thread: latch released, stopping")
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
             } finally {
@@ -85,6 +93,15 @@ class ReminderDoneForegroundService : Service() {
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
 
+        // Console messages from the headless boot must reach logcat: without a
+        // WebChromeClient they are dropped, and a silent drain is undebuggable.
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onConsoleMessage(message: ConsoleMessage): Boolean {
+                Log.d(TAG, "JS: ${message.message()} (${message.sourceId()}:${message.lineNumber()})")
+                return true
+            }
+        }
+
         val assetLoader = WebViewAssetLoader.Builder()
             .setDomain(APP_HOST)
             .addPathHandler("/", PublicAssetsPathHandler(this))
@@ -95,6 +112,18 @@ class ReminderDoneForegroundService : Service() {
                 view: WebView,
                 request: WebResourceRequest,
             ): WebResourceResponse? = assetLoader.shouldInterceptRequest(request.url)
+
+            override fun onPageFinished(view: WebView, url: String) {
+                Log.d(TAG, "Page finished: $url")
+            }
+
+            override fun onReceivedError(
+                view: WebView,
+                request: WebResourceRequest,
+                error: android.webkit.WebResourceError,
+            ) {
+                Log.e(TAG, "Load error: ${error.description} (${request.url})")
+            }
         }
 
         webView.addJavascriptInterface(HeadlessBridge(this, drained), "SUPAndroid")

@@ -461,7 +461,7 @@ export class ReminderModule {
     } finally {
       // One signal per finished done action, in every path (already done,
       // missing task, sync failure) so the service is never left waiting.
-      androidInterface.notifyBackgroundDrainComplete?.();
+      androidInterface?.notifyBackgroundDrainComplete?.();
     }
   }
 
