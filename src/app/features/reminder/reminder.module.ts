@@ -425,26 +425,44 @@ export class ReminderModule {
    */
   private async _handleDoneAction(taskId: string): Promise<void> {
     Log.log('ReminderModule: Handling done action', { taskId });
+    // Signalled when this done action has fully finished (including its
+    // upload attempt): the headless background service counts these to know
+    // when every queued completion has been processed and it can stop.
     try {
-      await this._syncWrapperService.sync();
-    } catch {
-      // Continue even if sync fails
-    }
+      try {
+        await this._syncWrapperService.sync();
+      } catch {
+        // Continue even if sync fails
+      }
 
-    const task = await this._getDoneActionTask(taskId);
-    if (!task || task.isDone) {
+      const task = await this._getDoneActionTask(taskId);
+      if (!task || task.isDone) {
+        this._snackService.open({
+          type: 'SUCCESS',
+          msg: T.NOTIFICATION.TASK_ALREADY_COMPLETED,
+        });
+        return;
+      }
+
+      this._taskService.setDone(taskId);
       this._snackService.open({
         type: 'SUCCESS',
-        msg: T.NOTIFICATION.TASK_ALREADY_COMPLETED,
+        msg: T.NOTIFICATION.TASK_MARKED_DONE,
       });
-      return;
-    }
 
-    this._taskService.setDone(taskId);
-    this._snackService.open({
-      type: 'SUCCESS',
-      msg: T.NOTIFICATION.TASK_MARKED_DONE,
-    });
+      // Upload the completion op immediately: the headless background service
+      // (ReminderDoneForegroundService) keeps the process alive exactly until
+      // this signal arrives, so the op must be on the remote before we return.
+      try {
+        await this._syncWrapperService.sync();
+      } catch {
+        // The op stays pending in the op-log; the next sync uploads it.
+      }
+    } finally {
+      // One signal per finished done action, in every path (already done,
+      // missing task, sync failure) so the service is never left waiting.
+      androidInterface.notifyBackgroundDrainComplete?.();
+    }
   }
 
   /**

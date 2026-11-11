@@ -42,8 +42,10 @@ class ReminderDoneForegroundService : Service() {
         private const val CHANNEL_ID = "sp_background_sync_channel"
         private const val NOTIFICATION_ID = 1002
         private const val APP_HOST = "localhost"
-        private const val DRAIN_TIMEOUT_S = 60L
-        private const val SYNC_GRACE_S = 20L
+        // Safety net only: the engine signals when every queued done action
+        // has finished (including its upload attempt). Must stay under the
+        // system's ~3-minute short-service foreground limit.
+        private const val COMPLETION_TIMEOUT_S = 150L
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -61,14 +63,12 @@ class ReminderDoneForegroundService : Service() {
         val webView = createHeadlessWebView(drained)
         webView.loadUrl("https://$APP_HOST/index.html")
 
-        // Wait off the main thread: the engine signals via
-        // notifyBackgroundDrainComplete() once its drain has run; the timeout
-        // bounds a failed/slow boot. The grace period afterwards lets the
-        // engine's boot-time sync upload the op before the WebView dies.
+        // Wait off the main thread: the engine signals once per finished done
+        // action (notifyBackgroundDrainComplete); the timeout is only a safety
+        // net for a failed/slow boot.
         thread(name = "sp-reminder-done-drain") {
             try {
-                drained.await(DRAIN_TIMEOUT_S, TimeUnit.SECONDS)
-                TimeUnit.SECONDS.sleep(SYNC_GRACE_S)
+                drained.await(COMPLETION_TIMEOUT_S, TimeUnit.SECONDS)
             } catch (e: InterruptedException) {
                 Thread.currentThread().interrupt()
             } finally {
@@ -138,12 +138,26 @@ class ReminderDoneForegroundService : Service() {
         private val context: android.content.Context,
         private val drained: CountDownLatch,
     ) {
+        private val expected = java.util.concurrent.atomic.AtomicInteger(-1)
+        private val completed = java.util.concurrent.atomic.AtomicInteger(0)
+
         @JavascriptInterface
-        fun getReminderDoneQueue(): String? = ReminderDoneQueue.getAndClear(context)
+        fun getReminderDoneQueue(): String? {
+            val raw = ReminderDoneQueue.getAndClear(context)
+            if (raw != null) {
+                expected.set(org.json.JSONArray(raw).length())
+            }
+            return raw
+        }
 
         @JavascriptInterface
         fun notifyBackgroundDrainComplete() {
-            drained.countDown()
+            // The engine signals once per finished done action. When every
+            // queued id has been processed, the service can stop promptly.
+            val expectedCount = expected.get()
+            if (expectedCount < 0 || completed.incrementAndGet() >= expectedCount) {
+                drained.countDown()
+            }
         }
     }
 }

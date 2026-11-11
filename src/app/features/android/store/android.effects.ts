@@ -129,9 +129,6 @@ export class AndroidEffects {
               androidInterface.getReminderDoneQueue?.bind(androidInterface),
               (id) => androidInterface.onReminderDone$.next(id),
             );
-            // Let the headless background worker (if any) stop early; a normal
-            // app session has no listener for this.
-            androidInterface.notifyBackgroundDrainComplete?.();
 
             try {
               const snoozeQueue = androidInterface.getReminderSnoozeQueue?.();
